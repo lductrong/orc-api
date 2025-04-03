@@ -14,10 +14,12 @@ ALLOWED_MIME_TYPES = {'image/png', 'image/jpeg', 'image/webp'}
 
 # Gemini Configuration
 API_KEY = os.getenv("GEMINI_AI_API_KEY")
-print(API_KEY)
 if not API_KEY:
     raise RuntimeError("GEMINI_AI_API_KEY environment variable not set")
 genai.configure(api_key=API_KEY)
+
+# Fixed prompt - không thay đổi
+FIXED_PROMPT = "Extract text from image, return only the text in the image, if one sentence then leave one line"
 
 def allowed_file(filename):
     return '.' in filename and \
@@ -74,7 +76,7 @@ def extract_text():
         model = genai.GenerativeModel("gemini-1.5-pro")
         response = model.generate_content([
             uploaded_file,
-            request.form.get('prompt', "Extract text from image, return only the text in the image, if one sentence then leave one line")
+            FIXED_PROMPT  # Sử dụng prompt cố định ở đây
         ])
         
         return jsonify({
