@@ -4,8 +4,6 @@ import os
 import tempfile
 from werkzeug.utils import secure_filename
 import imghdr
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
 
 app = Flask(__name__)
 
@@ -13,13 +11,6 @@ app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB limit
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
 ALLOWED_MIME_TYPES = {'image/png', 'image/jpeg', 'image/webp'}
-
-# Rate Limiter
-limiter = Limiter(
-    app=app,
-    key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"]
-)
 
 # Gemini Configuration
 API_KEY = os.getenv("GEMINI_AI_API_KEY")
@@ -58,7 +49,6 @@ def prep_image(image_path):
         return None
 
 @app.route('/extract-text', methods=['POST'])
-@limiter.limit("10 per minute")
 def extract_text():
     if 'file' not in request.files:
         return jsonify({"error": "No file provided"}), 400
@@ -101,4 +91,4 @@ def extract_text():
             os.unlink(tmp_path)
 
 if __name__ == "__main__":
-    app.run#(host="0.0.0.0", port=5000)
+    app.run()#(host="0.0.0.0", port=5000)
