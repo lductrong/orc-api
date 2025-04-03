@@ -3,86 +3,102 @@ import google.generativeai as genai
 import os
 import tempfile
 from werkzeug.utils import secure_filename
+import imghdr
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 app = Flask(__name__)
 
-# Configure Gemini
-API_KEY = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=API_KEY)
-
-# Allowed file extensions
+# Security Configuration
+app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB limit
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
+ALLOWED_MIME_TYPES = {'image/png', 'image/jpeg', 'image/webp'}
+
+# Rate Limiter
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"]
+)
+
+# Gemini Configuration
+API_KEY = os.getenv("GEMINI_AI_API_KEY")
+print(API_KEY)
+if not API_KEY:
+    raise RuntimeError("GEMINI_AI_API_KEY environment variable not set")
+genai.configure(api_key=API_KEY)
 
 def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def prep_image(image_path):
-    """Upload image to Gemini and return file reference"""
-    try:
-        sample_file = genai.upload_file(path=image_path, display_name="Uploaded Image")
-        print(f"Uploaded file '{sample_file.display_name}' as: {sample_file.uri}")
-        return sample_file
-    except Exception as e:
-        print(f"Error uploading file: {e}")
-        return None
+def validate_image(file_stream):
+    """Validate actual image type"""
+    file_stream.seek(0)
+    header = file_stream.read(32)
+    file_stream.seek(0)
+    
+    ext = imghdr.what(None, header)
+    return ext in ALLOWED_EXTENSIONS
 
-def extract_text_from_image(image_file, prompt):
-    """Extract text from image using Gemini"""
+def prep_image(image_path):
+    """Upload image to Gemini"""
     try:
-        model = genai.GenerativeModel(model_name="gemini-1.5-pro")
-        response = model.generate_content([image_file, prompt])
-        return response.text
+        mime_type = f"image/{imghdr.what(image_path)}"
+        if mime_type not in ALLOWED_MIME_TYPES:
+            raise ValueError("Unsupported image type")
+
+        return genai.upload_file(
+            path=image_path,
+            display_name=secure_filename(image_path),
+            mime_type=mime_type
+        )
     except Exception as e:
-        print(f"Error extracting text: {e}")
+        app.logger.error(f"Upload error: {str(e)}")
         return None
 
 @app.route('/extract-text', methods=['POST'])
+@limiter.limit("10 per minute")
 def extract_text():
-    """API endpoint for text extraction from images"""
-    # Check if file was uploaded
     if 'file' not in request.files:
-        return jsonify({"error": "No file part"}), 400
-    
+        return jsonify({"error": "No file provided"}), 400
+        
     file = request.files['file']
     
-    # Check if file has a name
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
-    
-    # Check if file is allowed
-    if not allowed_file(file.filename):
-        return jsonify({"error": "File type not allowed"}), 400
-    
-    # Get custom prompt if provided
-    prompt = request.form.get('prompt', "Extract text from image, if one sentence then leave one line")
-    
+    # Validate file
+    if not (file and allowed_file(file.filename)):
+        return jsonify({"error": "Invalid file type"}), 400
+        
+    if not validate_image(file.stream):
+        return jsonify({"error": "Invalid image content"}), 400
+
     try:
-        # Save uploaded file temporarily
-        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-            file.save(temp_file.name)
-            temp_file_path = temp_file.name
-        
-        # Process the image
-        uploaded_file = prep_image(temp_file_path)
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            file.save(tmp.name)
+            tmp_path = tmp.name
+
+        uploaded_file = prep_image(tmp_path)
         if not uploaded_file:
-            return jsonify({"error": "Failed to upload image to Gemini"}), 500
-        
-        extracted_text = extract_text_from_image(uploaded_file, prompt)
-        if not extracted_text:
-            return jsonify({"error": "Failed to extract text from image"}), 500
-        
-        # Clean up
-        os.unlink(temp_file_path)
+            return jsonify({"error": "Image upload failed"}), 500
+            
+        model = genai.GenerativeModel("gemini-1.5-pro")
+        response = model.generate_content([
+            uploaded_file,
+            request.form.get('prompt', "Extract text from image, return only the text in the image, if one sentence then leave one line")
+        ])
         
         return jsonify({
             "status": "success",
-            "extracted_text": extracted_text,
-            "prompt_used": prompt
+            "text": response.text
         })
-    
+        
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        app.logger.error(f"Processing error: {str(e)}")
+        return jsonify({"error": "Processing failed"}), 500
+        
+    finally:
+        if 'tmp_path' in locals() and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 if __name__ == "__main__":
-    app.run()
+    app.run#(host="0.0.0.0", port=5000)
