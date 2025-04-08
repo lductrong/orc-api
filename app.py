@@ -4,9 +4,10 @@ import os
 import tempfile
 from werkzeug.utils import secure_filename
 import imghdr
+from flask_cors import CORS 
 
 app = Flask(__name__)
-
+CORS(app)  # Cho phép tất cả domains
 # Security Configuration
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB limit
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
