@@ -5,6 +5,7 @@ import tempfile
 from werkzeug.utils import secure_filename
 import imghdr
 from flask_cors import CORS 
+import re
 
 app = Flask(__name__)
 
@@ -21,8 +22,18 @@ if not API_KEY:
     raise RuntimeError("GEMINI_AI_API_KEY environment variable not set")
 genai.configure(api_key=API_KEY)
 
-# Fixed prompt - không thay đổi
-FIXED_PROMPT = "Extract text from image, return only the text in the image, if one sentence then leave one line"
+#  prompt - không thay đổi
+PROMPT = """
+Extract the text in the image and return in the following format:
+
+1. Text: [the original text from the image]
+2. Pronunciation: [Latin transcription of the text]
+3. Translation: [Translate into Vietnamese naturally, matching native Vietnamese style and context, avoiding word-for-word translation]
+
+Only return these three items in plain text. Do not explain anything else.
+"""
+
+
 
 def allowed_file(filename):
     return '.' in filename and \
@@ -79,18 +90,35 @@ def extract_text():
         model = genai.GenerativeModel("gemini-1.5-pro")
         response = model.generate_content([
             uploaded_file,
-            FIXED_PROMPT  # Sử dụng prompt cố định ở đây
+            PROMPT
         ])
         
-        return jsonify({
-            "status": "success",
-            "text": response.text
-        })
-        
+        # Parse 
+        pattern = r"1\. Text: (.*?)\n2\. Pronunciation: (.*?)\n3\. Translation: (.*)"
+        match = re.search(pattern, response.text, re.DOTALL)
+
+        if match:
+            text = match.group(1).strip()
+            pronunciation = match.group(2).strip()
+            translation = match.group(3).strip()
+            return jsonify({
+                "status": "success",
+                "data": {
+                    "text": text,
+                    "pronunciation": pronunciation,
+                    "translation": translation
+                }
+            })
+        else:
+            return jsonify({
+                "error": "Could not extract information in expected format",
+                "raw_response": response.text
+            }), 500
+
     except Exception as e:
         app.logger.error(f"Processing error: {str(e)}")
         return jsonify({"error": "Processing failed"}), 500
-        
+
     finally:
         if 'tmp_path' in locals() and os.path.exists(tmp_path):
             os.unlink(tmp_path)
