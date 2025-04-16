@@ -17,23 +17,21 @@ ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
 ALLOWED_MIME_TYPES = {'image/png', 'image/jpeg', 'image/webp'}
 
 # Gemini Configuration
-API_KEY = os.getenv("GEMINI_AI_API_KEY")
+API_KEY = "AIzaSyC21O0_WJ2Lzn-KSZu7OOBR3eJV9rDCaqQ"  # os.getenv("GEMINI_AI_API_KEY")
 if not API_KEY:
     raise RuntimeError("GEMINI_AI_API_KEY environment variable not set")
 genai.configure(api_key=API_KEY)
 
-#  prompt - không thay đổi
+# Prompt không thay đổi
 PROMPT = """
 Extract the text in the image and return in the following format:
 
 1. Text: [the original text from the image]
-2. Pronunciation: [Latin transcription of the text]
+2. Pronunciation: [Phonetic of the text]
 3. Translation: [Translate into Vietnamese naturally, matching native Vietnamese style and context, avoiding word-for-word translation]
 
 Only return these three items in plain text. Do not explain anything else.
 """
-
-
 
 def allowed_file(filename):
     return '.' in filename and \
@@ -64,6 +62,80 @@ def prep_image(image_path):
         app.logger.error(f"Upload error: {str(e)}")
         return None
 
+def parse_gemini_response(response_text):
+    """Parse Gemini response with robust handling of different formats"""
+    
+    # Chuẩn hóa đầu vào: loại bỏ khoảng trắng thừa và ký tự đặc biệt
+    normalized_text = response_text.strip()
+    
+    # Pattern 1: Định dạng chuẩn với số thứ tự rõ ràng (1. 2. 3.)
+    pattern1 = re.compile(
+        r"1\.\s*Text:\s*(.*?)(?=\n\s*2\.\s*Pronunciation:|\Z)" +
+        r"\s*2\.\s*Pronunciation:\s*(.*?)(?=\n\s*3\.\s*Translation:|\Z)" +
+        r"\s*3\.\s*Translation:\s*(.*)",
+        re.DOTALL | re.IGNORECASE
+    )
+    
+    # Pattern 2: Định dạng không có số thứ tự, chỉ có tiêu đề
+    pattern2 = re.compile(
+        r"Text:\s*(.*?)(?=\n\s*Pronunciation:|\Z)" +
+        r"\s*Pronunciation:\s*(.*?)(?=\n\s*Translation:|\Z)" +
+        r"\s*Translation:\s*(.*)",
+        re.DOTALL | re.IGNORECASE
+    )
+    
+    # Pattern 3: Chỉ có các dòng riêng biệt với số thứ tự
+    pattern3 = re.compile(
+        r"1\.\s*(.*?)\n\s*2\.\s*(.*?)\n\s*3\.\s*(.*)",
+        re.DOTALL
+    )
+    
+    # Thử các pattern theo thứ tự
+    for pattern in [pattern1, pattern2, pattern3]:
+        match = pattern.search(normalized_text)
+        if match:
+            groups = [g.strip() for g in match.groups()]
+            # Kiểm tra xem có đủ 3 phần không
+            if len(groups) >= 3 and all(groups[:3]):
+                return {
+                    "text": groups[0],
+                    "pronunciation": groups[1],
+                    "translation": groups[2]
+                }
+    
+    # Fallback: Xử lý từng dòng nếu không match pattern nào
+    lines = [line.strip() for line in normalized_text.splitlines() if line.strip()]
+    
+    # Nếu có ít nhất 3 dòng
+    if len(lines) >= 3:
+        # Dòng đầu tiên là text
+        text = lines[0]
+        
+        # Tìm pronunciation (có thể chứa ký tự phiên âm)
+        pronunciation = ""
+        translation_start = 1
+        for i in range(1, len(lines)):
+            if any(char in lines[i] for char in ["/", "[", "]", "ˈ", "ː"]):  # Các ký tự phiên âm phổ biến
+                pronunciation = lines[i]
+                translation_start = i + 1
+                break
+        
+        # Phần còn lại là translation
+        translation = " ".join(lines[translation_start:]) if translation_start < len(lines) else ""
+        
+        return {
+            "text": text,
+            "pronunciation": pronunciation,
+            "translation": translation
+        }
+    
+    # Nếu tất cả đều thất bại, trả về raw response và cảnh báo
+    app.logger.warning(f"Could not parse response: {normalized_text}")
+    return {
+        "text": normalized_text,
+        "pronunciation": "",
+        "translation": ""
+    }
 @app.route('/extract-text', methods=['POST'])
 def extract_text():
     if 'file' not in request.files:
@@ -79,6 +151,7 @@ def extract_text():
         return jsonify({"error": "Invalid image content"}), 400
 
     try:
+        # Lưu file tạm
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             file.save(tmp.name)
             tmp_path = tmp.name
@@ -88,40 +161,25 @@ def extract_text():
             return jsonify({"error": "Image upload failed"}), 500
             
         model = genai.GenerativeModel("gemini-1.5-pro")
-        response = model.generate_content([
-            uploaded_file,
-            PROMPT
-        ])
+        response = model.generate_content([uploaded_file, PROMPT])
         
-        # Parse 
-        pattern = r"1\. Text: (.*?)\n2\. Pronunciation: (.*?)\n3\. Translation: (.*)"
-        match = re.search(pattern, response.text, re.DOTALL)
-
-        if match:
-            text = match.group(1).strip()
-            pronunciation = match.group(2).strip()
-            translation = match.group(3).strip()
-            return jsonify({
-                "status": "success",
-                "data": {
-                    "text": text,
-                    "pronunciation": pronunciation,
-                    "translation": translation
-                }
-            })
-        else:
-            return jsonify({
-                "error": "Could not extract information in expected format",
-                "raw_response": response.text
-            }), 500
+        # Phân tích kết quả
+        response_data = parse_gemini_response(response.text)
+        return jsonify({
+            "status": "success",
+            "data": response_data
+        })
 
     except Exception as e:
         app.logger.error(f"Processing error: {str(e)}")
-        return jsonify({"error": "Processing failed"}), 500
+        return jsonify({
+            "error": "Processing failed",
+            "details": str(e)
+        }), 500
 
     finally:
         if 'tmp_path' in locals() and os.path.exists(tmp_path):
             os.unlink(tmp_path)
 
 if __name__ == "__main__":
-    app.run()#(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=5000)
