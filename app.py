@@ -160,7 +160,7 @@ def extract_text():
         if not uploaded_file:
             return jsonify({"error": "Image upload failed"}), 500
             
-        model = genai.GenerativeModel("gemini-1.5-pro")
+        model = genai.GenerativeModel("gemini-2.0-flash-lite")
         response = model.generate_content([uploaded_file, PROMPT])
         
         # Phân tích kết quả
