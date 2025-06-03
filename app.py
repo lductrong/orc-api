@@ -17,7 +17,7 @@ ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
 ALLOWED_MIME_TYPES = {'image/png', 'image/jpeg', 'image/webp'}
 
 # Gemini Configuration
-API_KEY = os.getenv("GEMINI_AI_API_KEY")
+API_KEY = "AIzaSyC21O0_WJ2Lzn-KSZu7OOBR3eJV9rDCaqQ"
 if not API_KEY:
     raise RuntimeError("GEMINI_AI_API_KEY environment variable not set")
 genai.configure(api_key=API_KEY)
