@@ -17,7 +17,7 @@ ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
 ALLOWED_MIME_TYPES = {'image/png', 'image/jpeg', 'image/webp'}
 
 # Gemini Configuration
-API_KEY = "AIzaSyC21O0_WJ2Lzn-KSZu7OOBR3eJV9rDCaqQ"  # os.getenv("GEMINI_AI_API_KEY")
+API_KEY = os.getenv("GEMINI_AI_API_KEY")
 if not API_KEY:
     raise RuntimeError("GEMINI_AI_API_KEY environment variable not set")
 genai.configure(api_key=API_KEY)
@@ -182,4 +182,4 @@ def extract_text():
             os.unlink(tmp_path)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run()
